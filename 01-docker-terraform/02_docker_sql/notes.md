@@ -165,4 +165,79 @@ root@localhost:ny_taxi> select count(*) from yellow_taxi_data;
 ```
 ### 1.2.3 Connecting pdAdmin and postgres
 
-We aren't 
+This section moves away from being restricted to command line.
+
+We can use the image for pgAdmin4. Having once taught a SQL course that relied on pgAdmin 4 this is AWESOME. the installation caused a ton of headaches back then.
+
+```buildoutcfg
+# moving into running container:
+docker run -it \
+  -e PGADMIN_DEFAULT_EMAIL="admin@admin.com" \
+  -e PGADMIN_DEFAULT_PASSWORD="root" \
+  -p 8080:80 \
+  dpage/pgadmin4
+```
+Running that will then give us a port to access via web:
+```buildoutcfg
+[2024-12-23 23:01:15 +0000] [1] [INFO] Starting gunicorn 22.0.0
+[2024-12-23 23:01:15 +0000] [1] [INFO] Listening at: http://[::]:80 (1)
+[2024-12-23 23:01:15 +0000] [1] [INFO] Using worker: gthread
+[2024-12-23 23:01:15 +0000] [123] [INFO] Booting worker with pid: 123
+```
+We can then direct via `http://localhost:8080/login?next=/` and are prompted to login using credentials above.
+
+However, we can't actually set our server up without first using [docker network](https://docs.docker.com/engine/network/)
+- My understanding of this is that we use the network command in order to allow our database (postgres) to connect to pgadmin
+
+We establish this network with:
+```buildoutcfg
+docker network create pg-network
+```
+I now have a Docker network named `pg-network` which will allow multiple Docker containers to communicate.
+
+We then update some of the prior commands.
+
+#### Postgres Database
+```buildoutcfg
+docker run -it \
+  -e POSTGRES_USER="root" \
+  -e POSTGRES_PASSWORD="root" \
+  -e POSTGRES_DB="ny_taxi" \
+  -v /Users/davidwanner/Repos/data_engineering/data-engineering-zoomcamp/ny_taxi_postgres_data:/var/lib/postgresql/data \
+  -p 5432:5432 \
+  --network=pg-network \
+  --name pg-database \
+postgres:13
+```
+- `--network=pg-network` is going to specify that this container should be connected to the Docker network `pg-network`
+- `--name pg-database` is going to be a name for referring to this Docker container rather than needing the Docker id.
+- This means we could use something like `docker stop pg-database` to stop the container
+- Also, since we already passed data in we don't need to reestablish. The whole point of using a mount here is for `persistence`, meaning data is preserved when the container is stopped.
+
+#### PgAdmin connection
+```buildoutcfg
+docker run -it \
+  -e PGADMIN_DEFAULT_EMAIL="admin@admin.com" \
+  -e PGADMIN_DEFAULT_PASSWORD="root" \
+  -p 8080:80 \
+  --network=pg-network \
+  --name pgadmin \
+  dpage/pgadmin4
+```
+Similar to the above, we have now adding the open-source management tool `pgAdmin` to our `pg-network`. This will allow us to use pgAdmin to interact with our PostgreSQL database.
+
+There is a lot of value in using `pgAdmin` via Docker vs installing:
+- ease of setup: no manual install
+- isolation: can isolate to a container from host system, avoiding conflict with other software
+- consistency: we can always use the same version of `pgAdmin` - very helpful with reproducibility.
+
+#### Adding a Server
+
+We run the 3 commands above and need to log into our local: `http://localhost:8080/login?next=/`
+
+![plot](images/pgadmin_server.png)
+
+We then need to establish a connection, which can be done by using the `pg-database` host, which lets us connect to our container.
+
+And we can see our database and do all kinds of SQL things:
+![pgadmin_container](images/pgadmin_container.png)
