@@ -241,3 +241,139 @@ We then need to establish a connection, which can be done by using the `pg-datab
 
 And we can see our database and do all kinds of SQL things:
 ![pgadmin_container](images/pgadmin_container.png)
+
+### Building Via the `ingest.py` file
+
+This took me a bit, a few things to note:
+- Need to restart the containers built above:
+  - Start the pg-admin with : `docker start pg-admin`
+  - Start the database with: `docker start pg-database`
+- Also needed to clear out `yellow_taxi_data` if trying to load there. I just decided to try a new table name
+- Also, I am on a Mac and decided to locally install `wget`. That said, since this is running in a container I don't know if I needed to do that
+
+The command once the above is done:
+```buildoutcfg
+# URL to the gzipped files
+URL="https://github.com/DataTalksClub/nyc-tlc-data/releases/download/yellow/yellow_tripdata_2021-01.csv.gz"
+
+# command to run the actual ingest with the relevant params
+python ingest.py \
+  --user=root \
+  --password=root \
+  --host=localhost \
+  --port=5432 \
+  --db=ny_taxi \
+  --table_name=yellow_taxi_script_build \
+  --url=${URL}
+```
+
+And here is the output, we can see the script has pulled down data from Git, batched, and inserted:
+
+![automated_load](images/automated_load.png)
+
+Let's take a closer look at the script `ingest.py`:
+
+#### Ingestion Process:
+The below script is how we pass over all of our relevant info:
+```python
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Ingest CSV data to Postgres')
+
+    parser.add_argument('--user', required=True, help='user name for postgres')
+    parser.add_argument('--password', required=True, help='password for postgres')
+    parser.add_argument('--host', required=True, help='host for postgres')
+    parser.add_argument('--port', required=True, help='port for postgres')
+    parser.add_argument('--db', required=True, help='database name for postgres')
+    parser.add_argument('--table_name', required=True, help='name of the table where we will write the results to')
+    parser.add_argument('--url', required=True, help='url of the csv file')
+
+    args = parser.parse_args()
+
+    main(args)
+```
+`argparse` libary will handle the various args needed for establishing our connection. 
+
+Then the `main` function in the script gets this `args` object which can be unpacked:
+```python
+    user = params.user
+    password = params.password
+    host = params.host
+    port = params.port
+    db = params.db
+    table_name = params.table_name
+    url = params.url
+```
+
+And then the same steps as before can be run:
+- create engine (our connect to the postgres database):
+```python
+engine = create_engine(f'postgresql://{user}:{password}@{host}:{port}/{db}')
+```
+- Build the schema for the table from our input data (using 0 records)
+```python
+df.head(n=0).to_sql(name=table_name, con=engine, if_exists='replace')
+```
+- iterate through the iterable created and append data in `batches`:
+```python
+df.to_sql(name=table_name, con=engine, if_exists='append')
+```
+
+So now instead of needing to manually gather our data, open up a jupyter notebook and make connections we have a single scripts that can be run.
+
+And we see now that there are two tables available:
+
+![two_table](images/two_table.png)
+
+
+### 1.2.5 Docker-Compose
+
+Great help: https://www.youtube.com/watch?v=hKI6PkPhpa0&list=PL3MmuxUbc_hJed7dXYoJw8DoCuVHhGEQb&index=9
+
+The main point here is that we can run multiple, related services with just one config file.
+So, instead of needing to run `postgres` container and `pgadmin` container we can run this single compose
+
+```yaml
+services:
+  pgdatabase:
+    image: postgres:13
+    environment:
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=root
+      - POSTGRES_DB=ny_taxi
+    volumes:
+      - "/Users/davidwanner/Repos/data_engineering/data-engineering-zoomcamp/ny_taxi_postgres_data:/var/lib/postgresql/data"
+    ports:
+      - "5432:5432"
+  pgadmin:
+    image: dpage/pgadmin4
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@admin.com
+      - PGADMIN_DEFAULT_PASSWORD=root
+    ports:
+      - "8080:80"
+```
+In the above we are specifying:
+- pg database 
+  - Note: on my mac I needed to explicitly add full path in volumes 
+- pgadmin connection
+
+Starting it:
+`docker compose up`
+
+Or, detached mode: `docker compose up -d`
+
+I found it suprising that I did not need to point to the `docker-compose.yaml` specifically. My assumption is docker looks for a `.yaml`?
+
+Ah, yes:
+```yaml
+If you don't specify a file with the -f flag, docker compose up will look for a file named compose.yaml in the current directory. 
+If it doesn't find that, it will look for docker-compose.yml.
+```
+
+And when we run `docker ps` we see that two containers are now running:
+![docker_compose](images/docker compose.png)
+ 
+We will need to reconfigure our pgdatabase now for a docker version, I just used the same steps as above and called it `docker local`.
+- I will now have access to the database previously built when I run docker compose.
+
+Finally, we can shut this down with `ctrl+c`, but the proper way would be `docker compose down`
